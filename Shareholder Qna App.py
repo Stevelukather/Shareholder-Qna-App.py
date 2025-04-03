@@ -1,0 +1,112 @@
+import streamlit as st
+import sqlite3
+import pandas as pd
+import io
+
+def init_db():
+    conn = sqlite3.connect("shareholders.db")
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS shareholders (
+                    id INTEGER PRIMARY KEY,
+                    shareholder_number TEXT UNIQUE,
+                    name TEXT,
+                    postal_code TEXT,
+                    shares INTEGER)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS questions (
+                    id INTEGER PRIMARY KEY,
+                    shareholder_number TEXT,
+                    question TEXT)''')
+    conn.commit()
+    conn.close()
+
+def import_csv(uploaded_file):
+    df = pd.read_csv(uploaded_file)
+    conn = sqlite3.connect("shareholders.db")
+    df.to_sql("shareholders", conn, if_exists="append", index=False)
+    conn.close()
+    st.success("CSVデータをインポートしました！")
+
+def export_questions():
+    conn = sqlite3.connect("shareholders.db")
+    df = pd.read_sql("SELECT * FROM questions", conn)
+    conn.close()
+    csv = df.to_csv(index=False, encoding='utf-8-sig')
+    return csv
+
+def get_all_questions():
+    conn = sqlite3.connect("shareholders.db")
+    df = pd.read_sql("SELECT * FROM questions", conn)
+    conn.close()
+    return df
+
+def login(shareholder_number, postal_code):
+    conn = sqlite3.connect("shareholders.db")
+    c = conn.cursor()
+    c.execute("SELECT name, shares FROM shareholders WHERE shareholder_number = ? AND postal_code = ?", 
+              (shareholder_number, postal_code))
+    result = c.fetchone()
+    conn.close()
+    return result
+
+def save_question(shareholder_number, question):
+    conn = sqlite3.connect("shareholders.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO questions (shareholder_number, question) VALUES (?, ?)", 
+              (shareholder_number, question))
+    conn.commit()
+    conn.close()
+    st.success("質問が送信されました！")
+
+def main():
+    st.title("株主事前質問受付")
+    menu = ["管理者専用ページ", "株主専用ページ"]
+    choice = st.sidebar.selectbox("メニュー", menu)
+    
+    if choice == "管理者専用ページ":
+        st.subheader("管理者専用ページ")
+        admin_password = st.text_input("管理者パスワード", type="password")
+        if st.button("ログイン"):
+            if admin_password == "admin123":
+                st.success("管理者としてログインしました！")
+                
+                st.subheader("CSVデータのインポート")
+                uploaded_file = st.file_uploader("CSVファイルを選択", type=["csv"])
+                if uploaded_file:
+                    import_csv(uploaded_file)
+                
+                st.subheader("質問一覧")
+                df = get_all_questions()
+                st.dataframe(df)
+                
+                st.subheader("質問一覧をCSVエクスポート")
+                csv_data = export_questions()
+                st.download_button(label="CSVをダウンロード", data=csv_data, file_name="questions.csv", mime="text/csv")
+            else:
+                st.error("パスワードが違います！")
+    
+    elif choice == "株主専用ページ":
+        st.subheader("ログイン")
+        shareholder_number = st.text_input("株主番号")
+        postal_code = st.text_input("郵便番号", type="password")
+        if st.button("ログイン"):
+            user_data = login(shareholder_number, postal_code)
+            if user_data:
+                name, shares = user_data
+                st.session_state["logged_in"] = True
+                st.session_state["shareholder_number"] = shareholder_number
+                st.session_state["name"] = name
+                st.session_state["shares"] = shares
+                st.experimental_rerun()
+            else:
+                st.error("ログイン情報が正しくありません")
+        
+        if "logged_in" in st.session_state and st.session_state["logged_in"]:
+            st.subheader(f"ようこそ、{st.session_state['name']}様")
+            st.write(f"持ち株数: {st.session_state['shares']} 株")
+            question = st.text_area("質問を入力してください")
+            if st.button("送信"):
+                save_question(st.session_state["shareholder_number"], question)
+
+if __name__ == "__main__":
+    init_db()
+    main()
